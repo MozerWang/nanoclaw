@@ -375,7 +375,9 @@ export async function processTaskIpc(
         // Sentinel script update (empty string disables sentinel mode)
         if (data.sentinel_script !== undefined) {
           updates.sentinel_script =
-            data.sentinel_script === '' ? null : (data.sentinel_script as string);
+            data.sentinel_script === ''
+              ? null
+              : (data.sentinel_script as string);
           if (updates.sentinel_script) {
             updates.sentinel_maintain_at = new Date().toISOString();
           }

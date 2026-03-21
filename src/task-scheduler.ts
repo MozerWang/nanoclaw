@@ -42,7 +42,8 @@ function runSentinelScript(scriptPath: string): Promise<SentinelResult> {
       [scriptPath],
       { timeout: SENTINEL_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
       (error, stdout, stderr) => {
-        const exitCode = error && 'code' in error ? (error.code as number | null) : 0;
+        const exitCode =
+          error && 'code' in error ? (error.code as number | null) : 0;
         resolve({
           triggered: exitCode !== 0,
           stdout: stdout.trim(),
