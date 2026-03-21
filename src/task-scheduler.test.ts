@@ -30,6 +30,8 @@ describe('task scheduler', () => {
       next_run: new Date(Date.now() - 60_000).toISOString(),
       status: 'active',
       created_at: '2026-02-22T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
 
     const enqueueTask = vi.fn(
@@ -67,6 +69,8 @@ describe('task scheduler', () => {
       last_result: null,
       status: 'active' as const,
       created_at: '2026-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     };
 
     const nextRun = computeNextRun(task);
@@ -91,6 +95,8 @@ describe('task scheduler', () => {
       last_result: null,
       status: 'active' as const,
       created_at: '2026-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     };
 
     expect(computeNextRun(task)).toBeNull();
@@ -115,6 +121,8 @@ describe('task scheduler', () => {
       last_result: null,
       status: 'active' as const,
       created_at: '2026-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     };
 
     const nextRun = computeNextRun(task);

@@ -346,6 +346,8 @@ describe('task CRUD', () => {
       next_run: '2024-06-01T00:00:00.000Z',
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
 
     const task = getTaskById('task-1');
@@ -366,6 +368,8 @@ describe('task CRUD', () => {
       next_run: null,
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
 
     updateTask('task-2', { status: 'paused' });
@@ -384,6 +388,8 @@ describe('task CRUD', () => {
       next_run: null,
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
 
     deleteTask('task-3');

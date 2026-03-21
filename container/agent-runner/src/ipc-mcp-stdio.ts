@@ -84,12 +84,40 @@ MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It ca
 SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
-\u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
+\u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.
+
+SENTINEL MODE — For high-frequency monitoring tasks, enable sentinel mode to avoid invoking the full agent on every run. When enabled:
+1. On the FIRST run, the agent executes normally AND must generate a lightweight bash check script at sentinels/{task-id}.sh inside the group folder.
+2. On SUBSEQUENT runs, the host runs the bash script directly (no container, no LLM). If the script exits 0 (no change), the task is skipped. If it exits non-zero, the full agent is invoked with the script's stdout as context.
+3. Every 7 days, the agent is invoked for maintenance to review and update the sentinel script.
+
+The sentinel script contract:
+\u2022 Exit 0 = no change detected (task skipped, zero token cost)
+\u2022 Exit non-zero = change detected (agent invoked with stdout as alert context)
+\u2022 Use deterministic checks only: curl, diff, grep, jq, sha256sum, etc.
+\u2022 Store state files (snapshots, hashes) in the sentinels/ directory alongside the script.
+
+Example sentinel script for monitoring a webpage:
+\`\`\`bash
+#!/bin/bash
+DIR="$(dirname "$0")"
+URL="https://example.com/pricing"
+SNAPSHOT="$DIR/pricing-snapshot.txt"
+CURRENT=$(curl -sf "$URL" | grep -oP 'price[^<]*' | sort)
+[ -z "$CURRENT" ] && exit 0
+[ ! -f "$SNAPSHOT" ] && { echo "$CURRENT" > "$SNAPSHOT"; exit 0; }
+DIFF=$(diff "$SNAPSHOT" <(echo "$CURRENT"))
+[ -z "$DIFF" ] && exit 0
+echo "$CURRENT" > "$SNAPSHOT"
+echo "$DIFF"
+exit 1
+\`\`\``,
   {
-    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
+    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here. When sentinel_enabled=true, include instructions for generating the sentinel check script.'),
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
+    sentinel_enabled: z.boolean().default(false).describe('Enable sentinel mode for high-frequency monitoring tasks. When true, the agent must generate a bash check script on first run. Subsequent runs execute the script on the host — the full agent is only invoked when the script detects a change.'),
     target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
   },
   async (args) => {
@@ -132,10 +160,18 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const data = {
+    // When sentinel mode is enabled, augment the prompt so the agent knows
+    // to generate a sentinel check script on the first run.
+    let finalPrompt = args.prompt;
+    const sentinelScriptPath = `sentinels/${taskId}.sh`;
+    if (args.sentinel_enabled) {
+      finalPrompt = `${args.prompt}\n\n[SENTINEL SETUP REQUIRED]\nThis task has sentinel mode enabled. You MUST generate a lightweight bash check script and save it to: ${sentinelScriptPath}\nThe script must exit 0 if nothing changed, or exit non-zero with a summary on stdout if a change is detected. Store any state files (snapshots, hashes) in the sentinels/ directory. Make the script executable (chmod +x). After creating the script, proceed to execute the actual task.`;
+    }
+
+    const data: Record<string, string | boolean | undefined> = {
       type: 'schedule_task',
       taskId,
-      prompt: args.prompt,
+      prompt: finalPrompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode || 'group',
@@ -144,10 +180,15 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       timestamp: new Date().toISOString(),
     };
 
+    if (args.sentinel_enabled) {
+      data.sentinel_script = sentinelScriptPath;
+    }
+
     writeIpcFile(TASKS_DIR, data);
 
+    const sentinelNote = args.sentinel_enabled ? ' (sentinel mode enabled)' : '';
     return {
-      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
+      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}${sentinelNote}` }],
     };
   },
 );
@@ -249,12 +290,13 @@ server.tool(
 
 server.tool(
   'update_task',
-  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same.',
+  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same. Use sentinel_script to set or update the path to a sentinel check script (relative to the group folder).',
   {
     task_id: z.string().describe('The task ID to update'),
     prompt: z.string().optional().describe('New prompt for the task'),
     schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
     schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+    sentinel_script: z.string().optional().describe('Path to sentinel check script, relative to the group folder (e.g., "sentinels/task-123.sh"). Set to empty string to disable sentinel mode.'),
   },
   async (args) => {
     // Validate schedule_value if provided
@@ -290,6 +332,7 @@ server.tool(
     if (args.prompt !== undefined) data.prompt = args.prompt;
     if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
     if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
+    if (args.sentinel_script !== undefined) data.sentinel_script = args.sentinel_script;
 
     writeIpcFile(TASKS_DIR, data);
 

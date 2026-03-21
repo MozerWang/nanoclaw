@@ -1,6 +1,7 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execFile } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import path from 'path';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
@@ -20,6 +21,54 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+
+const SENTINEL_TIMEOUT_MS = 30_000;
+const SENTINEL_MAINTAIN_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const SENTINEL_MAINTAIN_RUN_COUNT = 50;
+
+interface SentinelResult {
+  triggered: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  durationMs: number;
+}
+
+function runSentinelScript(scriptPath: string): Promise<SentinelResult> {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const child = execFile(
+      '/bin/bash',
+      [scriptPath],
+      { timeout: SENTINEL_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      (error, stdout, stderr) => {
+        const exitCode = error && 'code' in error ? (error.code as number | null) : 0;
+        resolve({
+          triggered: exitCode !== 0,
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+          exitCode,
+          durationMs: Date.now() - startTime,
+        });
+      },
+    );
+    child.on('error', (err) => {
+      resolve({
+        triggered: true,
+        stdout: '',
+        stderr: err.message,
+        exitCode: null,
+        durationMs: Date.now() - startTime,
+      });
+    });
+  });
+}
+
+function needsSentinelMaintenance(task: ScheduledTask): boolean {
+  if (!task.sentinel_maintain_at) return false;
+  const lastMaintain = new Date(task.sentinel_maintain_at).getTime();
+  return Date.now() - lastMaintain > SENTINEL_MAINTAIN_INTERVAL_MS;
+}
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -107,6 +156,71 @@ async function runTask(
     { taskId: task.id, group: task.group_folder },
     'Running scheduled task',
   );
+
+  // --- Sentinel pre-check: run lightweight bash script on host ---
+  if (task.sentinel_script && !needsSentinelMaintenance(task)) {
+    const scriptPath = path.join(groupDir, task.sentinel_script);
+    if (fs.existsSync(scriptPath)) {
+      logger.debug(
+        { taskId: task.id, scriptPath },
+        'Running sentinel pre-check',
+      );
+      const sentinel = await runSentinelScript(scriptPath);
+      logger.info(
+        {
+          taskId: task.id,
+          triggered: sentinel.triggered,
+          exitCode: sentinel.exitCode,
+          durationMs: sentinel.durationMs,
+        },
+        'Sentinel check completed',
+      );
+
+      if (!sentinel.triggered) {
+        // No change detected — skip the full Agent invocation
+        const durationMs = Date.now() - startTime;
+        logTaskRun({
+          task_id: task.id,
+          run_at: new Date().toISOString(),
+          duration_ms: durationMs,
+          status: 'success',
+          result: 'sentinel: no change',
+          error: null,
+        });
+        const nextRun = computeNextRun(task);
+        updateTaskAfterRun(task.id, nextRun, 'sentinel: no change');
+        return;
+      }
+
+      // Sentinel triggered — inject alert context into prompt for the Agent
+      task = {
+        ...task,
+        prompt: `[SENTINEL ALERT — Your sentinel check script detected a change. Details below.]\n\n--- Sentinel stdout ---\n${sentinel.stdout || '(empty)'}\n--- End sentinel stdout ---\n\nOriginal task: ${task.prompt}`,
+      };
+      logger.info(
+        { taskId: task.id },
+        'Sentinel triggered, invoking agent with alert context',
+      );
+    } else {
+      logger.warn(
+        { taskId: task.id, scriptPath },
+        'Sentinel script not found, falling through to full agent',
+      );
+    }
+  } else if (task.sentinel_script && needsSentinelMaintenance(task)) {
+    // Time for maintenance — invoke full Agent with maintenance prompt
+    task = {
+      ...task,
+      prompt: `[SENTINEL MAINTENANCE — Your sentinel check script has not been reviewed in a while. Please review and update it if needed, then run the original task.]\n\nSentinel script path (relative to group folder): ${task.sentinel_script}\n\nOriginal task: ${task.prompt}`,
+    };
+    updateTask(task.id, {
+      sentinel_maintain_at: new Date().toISOString(),
+    });
+    logger.info(
+      { taskId: task.id },
+      'Sentinel maintenance triggered, invoking agent for script review',
+    );
+  }
 
   const groups = deps.registeredGroups();
   const group = Object.values(groups).find(

@@ -66,6 +66,8 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  sentinel_script: string | null;
+  sentinel_maintain_at: string | null;
 }
 
 export interface TaskRunLog {

@@ -160,6 +160,8 @@ describe('pause_task authorization', () => {
       next_run: '2025-06-01T00:00:00.000Z',
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
     createTask({
       id: 'task-other',
@@ -172,6 +174,8 @@ describe('pause_task authorization', () => {
       next_run: '2025-06-01T00:00:00.000Z',
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
   });
 
@@ -221,6 +225,8 @@ describe('resume_task authorization', () => {
       next_run: '2025-06-01T00:00:00.000Z',
       status: 'paused',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
   });
 
@@ -270,6 +276,8 @@ describe('cancel_task authorization', () => {
       next_run: null,
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
 
     await processTaskIpc(
@@ -293,6 +301,8 @@ describe('cancel_task authorization', () => {
       next_run: null,
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
 
     await processTaskIpc(
@@ -316,6 +326,8 @@ describe('cancel_task authorization', () => {
       next_run: null,
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
+      sentinel_script: null,
+      sentinel_maintain_at: null,
     });
 
     await processTaskIpc(

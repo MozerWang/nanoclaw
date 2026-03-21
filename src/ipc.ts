@@ -165,6 +165,7 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    sentinel_script?: string | boolean;
     // For register_group
     jid?: string;
     name?: string;
@@ -255,6 +256,13 @@ export async function processTaskIpc(
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
+
+        // Sentinel script path (relative to group folder) — set by MCP tool when sentinel_enabled=true
+        const sentinelScript =
+          typeof data.sentinel_script === 'string' && data.sentinel_script
+            ? data.sentinel_script
+            : null;
+
         createTask({
           id: taskId,
           group_folder: targetFolder,
@@ -266,9 +274,13 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
+          sentinel_script: sentinelScript,
+          sentinel_maintain_at: sentinelScript
+            ? new Date().toISOString()
+            : null,
         });
         logger.info(
-          { taskId, sourceGroup, targetFolder, contextMode },
+          { taskId, sourceGroup, targetFolder, contextMode, sentinelScript },
           'Task created via IPC',
         );
         deps.onTasksChanged();
@@ -359,6 +371,15 @@ export async function processTaskIpc(
             | 'once';
         if (data.schedule_value !== undefined)
           updates.schedule_value = data.schedule_value;
+
+        // Sentinel script update (empty string disables sentinel mode)
+        if (data.sentinel_script !== undefined) {
+          updates.sentinel_script =
+            data.sentinel_script === '' ? null : (data.sentinel_script as string);
+          if (updates.sentinel_script) {
+            updates.sentinel_maintain_at = new Date().toISOString();
+          }
+        }
 
         // Recompute next_run if schedule changed
         if (data.schedule_type || data.schedule_value) {

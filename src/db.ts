@@ -93,6 +93,22 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add sentinel columns for lightweight pre-check scripts (skip Agent when no change detected)
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN sentinel_script TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN sentinel_maintain_at TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -368,8 +384,8 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, sentinel_script, sentinel_maintain_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -382,6 +398,8 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    task.sentinel_script || null,
+    task.sentinel_maintain_at || null,
   );
 }
 
@@ -410,7 +428,13 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      | 'prompt'
+      | 'schedule_type'
+      | 'schedule_value'
+      | 'next_run'
+      | 'status'
+      | 'sentinel_script'
+      | 'sentinel_maintain_at'
     >
   >,
 ): void {
@@ -436,6 +460,14 @@ export function updateTask(
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.sentinel_script !== undefined) {
+    fields.push('sentinel_script = ?');
+    values.push(updates.sentinel_script);
+  }
+  if (updates.sentinel_maintain_at !== undefined) {
+    fields.push('sentinel_maintain_at = ?');
+    values.push(updates.sentinel_maintain_at);
   }
 
   if (fields.length === 0) return;
