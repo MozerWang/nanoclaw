@@ -9,4 +9,7 @@
 
 // telegram
 
+// terminal
+import './terminal.js';
+
 // whatsapp
