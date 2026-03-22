@@ -16,6 +16,8 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
+import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -25,7 +27,6 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -236,6 +237,26 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // Forward model override env vars so the SDK inside the container picks
+  // the right model name (e.g. kimi-k2.5 when using Moonshot).
+  // The proxy rewrites the actual "model" field in request bodies, but the
+  // SDK also needs these vars to avoid falling back to Claude defaults.
+  const modelVars = [
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+    'CLAUDE_CODE_SUBAGENT_MODEL',
+    'ENABLE_TOOL_SEARCH',
+  ];
+  const modelConfig = readEnvFile(modelVars);
+  for (const key of modelVars) {
+    const val = process.env[key] ?? modelConfig[key];
+    if (val !== undefined) {
+      args.push('-e', `${key}=${val}`);
+    }
   }
 
   // Runtime-specific args for host gateway resolution

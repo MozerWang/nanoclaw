@@ -32,6 +32,7 @@ export function startCredentialProxy(
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
+    'ANTHROPIC_MODEL',
   ]);
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
@@ -44,12 +45,31 @@ export function startCredentialProxy(
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
 
+  // When ANTHROPIC_MODEL is set, rewrite the "model" field in every request body.
+  // This lets alternative providers (e.g. Moonshot kimi-k2.5) work transparently
+  // even though the SDK hard-codes Claude model names.
+  const overrideModel = secrets.ANTHROPIC_MODEL || undefined;
+
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
-        const body = Buffer.concat(chunks);
+        let body = Buffer.concat(chunks);
+
+        // Rewrite model name in JSON request bodies when override is configured
+        if (overrideModel && body.length > 0) {
+          try {
+            const json = JSON.parse(body.toString('utf-8'));
+            if (json && typeof json === 'object' && 'model' in json) {
+              json.model = overrideModel;
+              body = Buffer.from(JSON.stringify(json), 'utf-8');
+            }
+          } catch {
+            // Not JSON (e.g. OAuth exchange) — pass through unchanged
+          }
+        }
+
         const headers: Record<string, string | number | string[] | undefined> =
           {
             ...(req.headers as Record<string, string>),
