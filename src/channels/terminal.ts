@@ -38,7 +38,7 @@ function printBanner() {
   console.log(
     `${bold(cyan('NanoClaw Terminal'))}  ${dim(`(type a message and press Enter)`)}`,
   );
-  console.log(dim(`Agent name: ${bold(ASSISTANT_NAME)}`));
+  console.log(dim(`Agent name: ${bold(ASSISTANT_NAME)}  |  /exit to quit`));
   console.log(dim(line));
 }
 
@@ -108,6 +108,11 @@ class TerminalChannel implements Channel {
         return;
       }
 
+      if (/^\/(exit|quit|q)$/i.test(content)) {
+        if (isTTY) console.log(dim('Bye!'));
+        process.exit(0);
+      }
+
       const msg: NewMessage = {
         id: `terminal-${Date.now()}`,
         chat_jid: TERMINAL_JID,
@@ -123,8 +128,18 @@ class TerminalChannel implements Channel {
     });
 
     this.rl.on('close', () => {
-      logger.info('Terminal stdin closed, shutting down');
-      process.exit(0);
+      logger.info('Terminal stdin closed');
+      // In pipe mode (non-TTY), give the agent time to process queued messages
+      // before exiting. In interactive mode, exit immediately.
+      if (process.stdin.isTTY) {
+        process.exit(0);
+      } else {
+        // Wait up to 5 minutes for agent to finish, then exit
+        setTimeout(() => {
+          logger.info('Agent processing timed out, shutting down');
+          process.exit(0);
+        }, 300000).unref();
+      }
     });
   }
 
