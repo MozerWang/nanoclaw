@@ -239,12 +239,12 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
-  // Forward model override env vars so the SDK inside the container picks
-  // the right model name (e.g. kimi-k2.5 when using Moonshot).
-  // The proxy rewrites the actual "model" field in request bodies, but the
-  // SDK also needs these vars to avoid falling back to Claude defaults.
+  // Forward model-related env vars into the container so the SDK selects
+  // the right model tier. ANTHROPIC_MODEL is intentionally excluded here —
+  // it is read only by the credential proxy (host side) to rewrite the HTTP
+  // request body, because the Claude Code SDK rejects non-claude-* model names
+  // before even sending a request.
   const modelVars = [
-    'ANTHROPIC_MODEL',
     'ANTHROPIC_DEFAULT_OPUS_MODEL',
     'ANTHROPIC_DEFAULT_SONNET_MODEL',
     'ANTHROPIC_DEFAULT_HAIKU_MODEL',

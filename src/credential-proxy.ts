@@ -99,11 +99,16 @@ export function startCredentialProxy(
           }
         }
 
+        // Prepend the base URL's pathname so providers like Moonshot that
+        // use a path prefix (e.g. /anthropic) are reached correctly.
+        const basePath = upstreamUrl.pathname.replace(/\/$/, '');
+        const upstreamPath = basePath + (req.url ?? '/');
+
         const upstream = makeRequest(
           {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
+            path: upstreamPath,
             method: req.method,
             headers,
           } as RequestOptions,
