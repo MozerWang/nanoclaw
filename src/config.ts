@@ -53,6 +53,8 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
 );
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
+export const COLD_START_TIMEOUT = parseInt(process.env.COLD_START_TIMEOUT || '300000', 10); // 5min — max wait for first output before releasing the slot
+export const RESULT_DEBOUNCE_MS = parseInt(process.env.RESULT_DEBOUNCE_MS || '2000', 10); // Merge rapid-fire agent results within this window
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,

@@ -3,9 +3,11 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  COLD_START_TIMEOUT,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  RESULT_DEBOUNCE_MS,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -194,43 +196,77 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
-  // Track idle timer for closing stdin when agent is idle
+  // Adaptive idle timer: short cold-start timeout until first output,
+  // then full IDLE_TIMEOUT. Prevents stuck agents from hogging slots.
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let hasProducedOutput = false;
 
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
+    const timeout = hasProducedOutput ? IDLE_TIMEOUT : COLD_START_TIMEOUT;
     idleTimer = setTimeout(() => {
-      logger.debug(
-        { group: group.name },
-        'Idle timeout, closing container stdin',
+      logger.info(
+        { group: group.name, phase: hasProducedOutput ? 'idle' : 'cold-start' },
+        'Timeout reached, closing container stdin',
       );
       queue.closeStdin(chatJid);
-    }, IDLE_TIMEOUT);
+    }, timeout);
   };
+
+  resetIdleTimer();
 
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
 
+  // Debounce: accumulate rapid-fire results and send as one merged message
+  let pendingSegments: string[] = [];
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushPending = async () => {
+    if (pendingSegments.length === 0) return;
+    const segments = pendingSegments;
+    pendingSegments = [];
+
+    const text =
+      segments.length === 1 ? segments[0] : segments.join('\n\n---\n\n');
+
+    await channel.sendMessage(chatJid, text);
+    outputSentToUser = true;
+  };
+
+  const scheduleFlush = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      flushPending().catch((err) =>
+        logger.error({ group: group.name, err }, 'Failed to flush debounced output'),
+      );
+    }, RESULT_DEBOUNCE_MS);
+  };
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+        pendingSegments.push(text);
+        scheduleFlush();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
+      hasProducedOutput = true;
       resetIdleTimer();
     }
 
     if (result.status === 'success') {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+      await flushPending();
       queue.notifyIdle(chatJid);
     }
 
@@ -238,6 +274,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       hadError = true;
     }
   });
+
+  // Flush any debounced output before cleanup
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+  await flushPending();
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);

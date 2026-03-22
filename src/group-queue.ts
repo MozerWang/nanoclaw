@@ -159,9 +159,15 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskContainer)
+    if (!state.active || !state.groupFolder) return false;
+    if (state.isTaskContainer) {
+      logger.debug(
+        { groupJid },
+        'Container running a scheduled task, message will be queued until task completes',
+      );
       return false;
-    state.idleWaiting = false; // Agent is about to receive work, no longer idle
+    }
+    state.idleWaiting = false;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
